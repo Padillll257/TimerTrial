@@ -1,11 +1,14 @@
 <script setup>
 import { computed } from 'vue'
 import { formatDuration } from '../utils/format.js'
+import { useMissionStore } from '../store/missionStore.js'
 
 const props = defineProps({
   state: { type: Object, required: true }
 })
 const emit = defineEmits(['start', 'mark', 'reset'])
+
+const { setDropResult } = useMissionStore()
 
 const RADIUS = 84
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
@@ -73,11 +76,23 @@ const actionButton = computed(() => {
 // button, which during "running" is Emergency Stop (`.cta`) and must only
 // ever abort the trial, never also count as a gate tap. Idle and finished
 // states are left alone: the dedicated Start / Start New Trial buttons
-// still own tap-to-start / tap-to-reset there.
+// still own tap-to-start / tap-to-reset there, and the drop-result buttons
+// (only rendered when finished) have their own click handlers.
 function onPanelActivate(event) {
   if (props.state.status !== 'running') return
   if (event.target.closest('.cta')) return
   emit('mark', 'success')
+}
+
+// Gate 4 payload-drop classification, offered once the trial is over.
+const dropOptions = [
+  { value: 'in_box', label: 'Masuk Kotak', icon: '✓', tone: 'success' },
+  { value: 'near_area', label: 'Area Sekitar', icon: '±', tone: 'warn' },
+  { value: 'missed', label: 'Gagal Drop', icon: '✕', tone: 'danger' }
+]
+
+function onDropSelect(value) {
+  setDropResult(value)
 }
 </script>
 
@@ -121,6 +136,25 @@ function onPanelActivate(event) {
     <p v-if="state.status === 'running'" class="ring-hint">
       Tap anywhere on this card when a gate is passed — except Emergency Stop
     </p>
+
+    <!-- Gate 4 drop-result menu — only shown once the trial is over -->
+    <div v-if="state.status === 'finished'" class="drop-result">
+      <p class="drop-result-label">Gate 4 · Drop Result</p>
+      <div class="drop-options">
+        <button
+          v-for="opt in dropOptions"
+          :key="opt.value"
+          type="button"
+          class="drop-btn"
+          :data-tone="opt.tone"
+          :data-active="state.dropResult === opt.value"
+          @click="onDropSelect(opt.value)"
+        >
+          <span class="drop-btn-icon">{{ opt.icon }}</span>
+          <span class="drop-btn-label">{{ opt.label }}</span>
+        </button>
+      </div>
+    </div>
 
     <button
       type="button"
@@ -291,6 +325,67 @@ function onPanelActivate(event) {
   font-size: clamp(30px, 8vw, 40px);
   font-weight: 600;
   color: var(--text-primary);
+}
+
+/* Gate 4 drop-result menu */
+.drop-result {
+  margin: 20px 0 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-row);
+}
+
+.drop-result-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 10px;
+}
+
+.drop-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.drop-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-panel-raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.drop-btn:hover {
+  border-color: var(--accent-dim);
+  color: var(--text-primary);
+}
+.drop-btn-icon {
+  font-size: 16px;
+}
+
+.drop-btn[data-active='true'] {
+  background: var(--accent);
+  color: #1b1006;
+  border-color: var(--accent);
+}
+.drop-btn[data-tone='warn'][data-active='true'] {
+  background: var(--accent-dim);
+  color: #1b1006;
+  border-color: var(--accent-dim);
+}
+.drop-btn[data-tone='danger'][data-active='true'] {
+  background: var(--danger);
+  color: #fbe9e2;
+  border-color: var(--danger);
 }
 
 .cta {

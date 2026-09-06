@@ -17,6 +17,11 @@ function freshWaypoints() {
 
 const TRIALS_API_URL = '/api/trials'
 
+// Gate 4's payload-drop classification, chosen after a trial finishes.
+// Not a waypoint status (that's still success/failed) — this is an extra
+// piece of detail attached to the trial as a whole.
+const DROP_RESULTS = ['in_box', 'near_area', 'missed']
+
 const state = reactive({
   // 'idle' | 'running' | 'finished'
   status: 'idle',
@@ -25,6 +30,7 @@ const state = reactive({
   currentIndex: -1,
   waypoints: freshWaypoints(),
   outcome: null, // 'success' | 'failed' | null
+  dropResult: null, // 'in_box' | 'near_area' | 'missed' | null — Gate 4 drop classification for the current/just-finished trial
   trials: [],
   // Backend trial-log sync. 'idle' before the first load, then one of:
   // 'loading' | 'synced' | 'offline' (no backend configured) | 'error'
@@ -43,6 +49,7 @@ function startMission() {
   state.waypoints = freshWaypoints()
   state.status = 'running'
   state.outcome = null
+  state.dropResult = null
   state.currentIndex = 0
   state.startedAt = new Date()
   state.elapsedMs = 0
@@ -59,6 +66,7 @@ function finalizeTrial(outcome) {
     startedAt: state.startedAt,
     totalTimeMs: state.elapsedMs,
     outcome,
+    dropResult: null,
     waypoints: state.waypoints.map((w) => ({ ...w }))
   }
   state.trials.unshift(trial)
@@ -70,6 +78,7 @@ function serializeTrial(trial) {
     startedAt: trial.startedAt.toISOString(),
     totalTimeMs: trial.totalTimeMs,
     outcome: trial.outcome,
+    dropResult: trial.dropResult ?? null,
     waypoints: trial.waypoints.map((w) => ({
       id: w.id,
       label: w.label,
@@ -140,6 +149,7 @@ async function loadTrialsFromServer() {
         startedAt,
         totalTimeMs: raw.totalTimeMs,
         outcome: raw.outcome === 'success' ? 'success' : 'failed',
+        dropResult: DROP_RESULTS.includes(raw.dropResult) ? raw.dropResult : null,
         waypoints: Array.isArray(raw.waypoints)
           ? raw.waypoints.map((w) => ({
               id: w.id ?? '',
@@ -182,6 +192,42 @@ function markWaypoint(waypointStatus) {
   }
 }
 
+// Records how the Gate 4 payload drop went, for the trial that just
+// finished. Only valid once the trial is over — this is a post-hoc
+// classification, not something that affects the mission's outcome or
+// flow while it's running. Updates both the "current mission" mirror
+// (state.dropResult, used by TimerPanel for button highlighting) and the
+// actual trial record in history (state.trials[0], since that's exactly
+// the trial finalizeTrial() just pushed), then syncs the full trials
+// array to the backend so the change isn't lost on refresh.
+async function setDropResult(result) {
+  if (state.status !== 'finished') return
+  if (!DROP_RESULTS.includes(result)) return
+  if (!state.trials[0]) return
+
+  state.dropResult = result
+  state.trials[0].dropResult = result
+
+  try {
+    const res = await fetch(TRIALS_API_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state.trials.map(serializeTrial))
+    })
+    if (res.status === 503) {
+      state.syncStatus = 'offline'
+      return
+    }
+    if (!res.ok) {
+      state.syncStatus = 'error'
+      return
+    }
+    state.syncStatus = 'synced'
+  } catch {
+    state.syncStatus = 'error'
+  }
+}
+
 function resetForNewTrial() {
   clearInterval(intervalId)
   state.status = 'idle'
@@ -189,6 +235,7 @@ function resetForNewTrial() {
   state.startedAt = null
   state.currentIndex = -1
   state.outcome = null
+  state.dropResult = null
   state.waypoints = freshWaypoints()
 }
 
@@ -281,6 +328,7 @@ function exportTrialsLog() {
       startedAt: trial.startedAt.toISOString(),
       totalTimeMs: trial.totalTimeMs,
       outcome: trial.outcome,
+      dropResult: trial.dropResult ?? null,
       waypoints: trial.waypoints.map((w) => ({
         id: w.id,
         label: w.label,
@@ -318,6 +366,7 @@ function importTrialsLog(jsonText) {
       startedAt,
       totalTimeMs,
       outcome: raw.outcome === 'success' ? 'success' : 'failed',
+      dropResult: DROP_RESULTS.includes(raw.dropResult) ? raw.dropResult : null,
       waypoints: Array.isArray(raw.waypoints)
         ? raw.waypoints.map((w) => ({
             id: w.id ?? '',
@@ -343,6 +392,7 @@ export function useMissionStore() {
     state: readonly(state),
     startMission,
     markWaypoint,
+    setDropResult,
     resetForNewTrial,
     exportTrialsLog,
     importTrialsLog,

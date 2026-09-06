@@ -104,6 +104,20 @@ const stats = computed(() => {
   const successRate = total === 0 ? 0 : Math.round((success / total) * 100)
   return { total, success, failed, successRate }
 })
+
+// --- Gate 4 drop-result label ---
+function dropResultLabel(result) {
+  switch (result) {
+    case 'in_box':
+      return 'Masuk Kotak'
+    case 'near_area':
+      return 'Area Sekitar'
+    case 'missed':
+      return 'Gagal Drop'
+    default:
+      return null
+  }
+}
 </script>
 
 <template>
@@ -174,6 +188,13 @@ const stats = computed(() => {
           <div class="trial-summary">
             <span class="trial-outcome">{{ trial.outcome === 'success' ? 'Success' : 'Failed' }}</span>
             <span class="trial-total">{{ formatDuration(trial.totalTimeMs) }}</span>
+            <span
+              v-if="trial.dropResult"
+              class="drop-chip"
+              :data-result="trial.dropResult"
+            >
+              {{ dropResultLabel(trial.dropResult) }}
+            </span>
           </div>
           <button
             type="button"
@@ -201,7 +222,16 @@ const stats = computed(() => {
 
         <ul v-if="expanded.has(trial.id)" class="wp-detail">
           <li v-for="wp in trial.waypoints" :key="wp.id" class="wp-detail-row" :data-status="wp.status">
-            <span class="wp-detail-label">{{ wp.label }}</span>
+            <span class="wp-detail-label">
+              {{ wp.label }}
+              <span
+                v-if="wp.id === 'gate4' && trial.dropResult"
+                class="wp-drop-chip"
+                :data-result="trial.dropResult"
+              >
+                {{ dropResultLabel(trial.dropResult) }}
+              </span>
+            </span>
             <span class="wp-detail-time">{{ wp.timeMs != null ? formatDuration(wp.timeMs) : '--:--.--' }}</span>
           </li>
         </ul>
@@ -403,6 +433,50 @@ const stats = computed(() => {
   font-variant-numeric: tabular-nums;
   font-size: 14px;
   color: var(--text-primary);
+}
+
+/* Gate 4 drop-result chips */
+.drop-chip {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.drop-chip[data-result='in_box'] {
+  color: var(--accent-strong);
+  border-color: var(--accent-dim);
+}
+.drop-chip[data-result='near_area'] {
+  color: #d9a441;
+  border-color: rgba(217, 164, 65, 0.4);
+}
+.drop-chip[data-result='missed'] {
+  color: var(--danger-strong);
+  border-color: var(--danger);
+}
+
+.wp-drop-chip {
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+}
+.wp-drop-chip[data-result='in_box'] {
+  color: var(--accent-strong);
+  border-color: var(--accent-dim);
+}
+.wp-drop-chip[data-result='near_area'] {
+  color: #d9a441;
+  border-color: rgba(217, 164, 65, 0.4);
+}
+.wp-drop-chip[data-result='missed'] {
+  color: var(--danger-strong);
+  border-color: var(--danger);
 }
 
 .trial-delete {
