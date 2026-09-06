@@ -1,9 +1,21 @@
 <script setup>
+import { onMounted } from 'vue'
 import { useMissionStore } from './store/missionStore.js'
 import TimerPanel from './components/TimerPanel.vue'
 import HistoryPanel from './components/HistoryPanel.vue'
 
-const { state, startMission, markWaypoint, resetForNewTrial } = useMissionStore()
+const { state, startMission, markWaypoint, resetForNewTrial, loadTrialsFromServer } = useMissionStore()
+
+const SYNC_LABEL = {
+  loading: 'Syncing…',
+  synced: 'Synced',
+  offline: 'Local only',
+  error: 'Sync error'
+}
+
+onMounted(() => {
+  loadTrialsFromServer()
+})
 </script>
 
 <template>
@@ -13,7 +25,12 @@ const { state, startMission, markWaypoint, resetForNewTrial } = useMissionStore(
         <span class="brand-mark" aria-hidden="true"></span>
         <span class="brand-name">Mission Timer</span>
       </div>
-      <span class="trial-count">{{ state.trials.length }} trial{{ state.trials.length === 1 ? '' : 's' }} logged</span>
+      <div class="topbar-meta">
+        <span v-if="SYNC_LABEL[state.syncStatus]" class="sync-badge" :data-status="state.syncStatus">
+          {{ SYNC_LABEL[state.syncStatus] }}
+        </span>
+        <span class="trial-count">{{ state.trials.length }} trial{{ state.trials.length === 1 ? '' : 's' }} logged</span>
+      </div>
     </header>
 
     <main class="layout">
@@ -63,9 +80,32 @@ const { state, startMission, markWaypoint, resetForNewTrial } = useMissionStore(
   letter-spacing: -0.01em;
 }
 
+.topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .trial-count {
   font-size: 12px;
   color: var(--text-faint);
+}
+
+.sync-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--text-faint);
+}
+.sync-badge[data-status='synced'] {
+  color: var(--accent-strong);
+  border-color: var(--accent-dim);
+}
+.sync-badge[data-status='error'] {
+  color: var(--danger-strong);
+  border-color: var(--danger);
 }
 
 .layout {

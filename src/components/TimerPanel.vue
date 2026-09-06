@@ -44,14 +44,14 @@ function rowState(wp, index) {
   return 'pending'
 }
 
-// The ring doubles as the primary control: tap to start when idle, tap to
-// log the current gate as passed while running. It does nothing once the
-// mission is finished (use "Start New Trial" instead).
+// The ring is the visual focal point and still works as its own tap
+// target for starting the mission when idle. Once the mission is running,
+// marking a gate is instead handled by the panel-wide tap handler below
+// (onPanelActivate) so any point on the card works — the ring no longer
+// marks on its own, otherwise a tap on the ring would double-fire.
 function onRingActivate() {
   if (props.state.status === 'idle') {
     emit('start')
-  } else if (props.state.status === 'running') {
-    emit('mark', 'success')
   }
 }
 
@@ -66,10 +66,23 @@ const actionButton = computed(() => {
   }
   return { label: 'Start New Trial', handler: () => emit('reset'), variant: 'ghost' }
 })
+
+// While a mission is running, the whole card is one big "gate passed"
+// button — tapping anywhere inside it (the ring, the waypoint list, empty
+// space, ...) logs the current gate. The only exception is the action
+// button, which during "running" is Emergency Stop (`.cta`) and must only
+// ever abort the trial, never also count as a gate tap. Idle and finished
+// states are left alone: the dedicated Start / Start New Trial buttons
+// still own tap-to-start / tap-to-reset there.
+function onPanelActivate(event) {
+  if (props.state.status !== 'running') return
+  if (event.target.closest('.cta')) return
+  emit('mark', 'success')
+}
 </script>
 
 <template>
-  <section class="panel">
+  <section class="panel" :data-armed="state.status === 'running'" @click="onPanelActivate">
     <div class="panel-head">
       <div>
         <p class="eyebrow">Current Mission</p>
@@ -84,7 +97,7 @@ const actionButton = computed(() => {
       type="button"
       class="ring-wrap"
       :disabled="state.status === 'finished'"
-      :aria-label="state.status === 'idle' ? 'Start mission' : 'Log current gate as passed'"
+      :aria-label="state.status === 'idle' ? 'Start mission' : 'Elapsed time'"
       @click="onRingActivate"
     >
       <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
@@ -105,7 +118,9 @@ const actionButton = computed(() => {
       </span>
     </button>
 
-    <p v-if="state.status === 'running'" class="ring-hint">Tap the ring when a gate is passed</p>
+    <p v-if="state.status === 'running'" class="ring-hint">
+      Tap anywhere on this card when a gate is passed — except Emergency Stop
+    </p>
 
     <button
       type="button"
@@ -143,6 +158,20 @@ const actionButton = computed(() => {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   padding: 20px 18px 24px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.panel[data-armed='true'] {
+  cursor: pointer;
+  border-color: var(--accent-dim);
+  box-shadow: 0 0 0 1px rgba(226, 144, 63, 0.12) inset;
+}
+
+/* The Emergency Stop button is the one tap target inside an armed panel
+   that must not look or behave like "tap anywhere" — it keeps its own
+   cursor and stays visually a distinct, deliberate control. */
+.panel[data-armed='true'] .cta-danger {
+  cursor: pointer;
 }
 
 .panel-head {
