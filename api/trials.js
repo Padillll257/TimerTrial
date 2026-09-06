@@ -1,26 +1,38 @@
 // Serverless function deployed by Vercel at /api/trials.
 //
-// Storage: Upstash Redis, reached through the Vercel Marketplace "Redis"
-// integration. Once that integration is attached to the project, Vercel
-// injects UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN automatically —
-// no manual .env wiring needed for a production deploy.
-// (Vercel's own first-party "Vercel KV" product was sunset and migrated to
-// Upstash, so Upstash is the current supported path for this kind of
-// small, serverless key-value storage.)
+// Storage: a Redis database attached via the Vercel Marketplace "Redis"
+// integration — the classic TCP-based kind, reached through a single
+// REDIS_URL connection string (as opposed to Upstash's separate REST URL +
+// token pair). Vercel injects REDIS_URL automatically once that
+// integration is connected to this project and the project is redeployed.
 //
-// Data model: a single JSON array of trials is kept under one Redis key.
-// This app is a single-operator trial logger, not a multi-tenant service,
-// so a single list is enough — no need for per-user partitioning.
+// Data model: a single JSON array of trials is kept (as a JSON string,
+// since node-redis doesn't auto-serialize like some REST clients do) under
+// one Redis key. This app is a single-operator trial logger, not a
+// multi-tenant service, so a single list is enough — no per-user
+// partitioning needed.
 
-import { Redis } from '@upstash/redis'
+import { createClient } from 'redis'
 
 const TRIALS_KEY = 'timertrial:trials'
 
-function getRedis() {
-  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
-    return null
+// Reused across warm serverless invocations instead of reconnecting on
+// every request. Cached at module scope so concurrent requests hitting the
+// same warm instance share one in-flight connect() call instead of racing
+// to open multiple sockets.
+let clientPromise = null
+
+function getClientPromise() {
+  if (!process.env.REDIS_URL) return null
+  if (!clientPromise) {
+    const client = createClient({ url: process.env.REDIS_URL })
+    // node-redis throws unhandled errors if nothing listens for 'error' —
+    // this just logs so a transient network blip doesn't crash the
+    // function process.
+    client.on('error', (err) => console.error('[api/trials] redis client error:', err))
+    clientPromise = client.connect().then(() => client)
   }
-  return Redis.fromEnv()
+  return clientPromise
 }
 
 // Optional write protection: set TRIAL_LOG_API_KEY in the Vercel project's
@@ -43,10 +55,10 @@ export default async function handler(req, res) {
     return
   }
 
-  const redis = getRedis()
-  if (!redis) {
+  const pendingClient = getClientPromise()
+  if (!pendingClient) {
     res.status(503).json({
-      error: 'Storage not configured. Attach an Upstash Redis integration to this Vercel project.'
+      error: 'Storage not configured. Attach a Redis integration to this Vercel project (REDIS_URL missing).'
     })
     return
   }
@@ -57,8 +69,11 @@ export default async function handler(req, res) {
   }
 
   try {
+    const client = await pendingClient
+
     if (req.method === 'GET') {
-      const trials = (await redis.get(TRIALS_KEY)) || []
+      const raw = await client.get(TRIALS_KEY)
+      const trials = raw ? JSON.parse(raw) : []
       res.status(200).json({ trials })
       return
     }
@@ -70,15 +85,16 @@ export default async function handler(req, res) {
         return
       }
 
-      const trials = (await redis.get(TRIALS_KEY)) || []
+      const raw = await client.get(TRIALS_KEY)
+      const trials = raw ? JSON.parse(raw) : []
       trials.push(trial)
-      await redis.set(TRIALS_KEY, trials)
+      await client.set(TRIALS_KEY, JSON.stringify(trials))
       res.status(201).json({ trials })
       return
     }
 
     if (req.method === 'DELETE') {
-      await redis.del(TRIALS_KEY)
+      await client.del(TRIALS_KEY)
       res.status(200).json({ trials: [] })
       return
     }
@@ -87,6 +103,9 @@ export default async function handler(req, res) {
     res.status(405).json({ error: 'Method not allowed' })
   } catch (err) {
     console.error('[api/trials] storage error:', err)
+    // Don't let a broken/expired connection poison future warm-start
+    // invocations — force the next request to reconnect from scratch.
+    clientPromise = null
     res.status(500).json({ error: 'Storage error' })
   }
 }

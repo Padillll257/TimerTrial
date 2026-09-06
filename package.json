@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "vue": "^3.5.41",
-    "@upstash/redis": "^1.35.1"
+    "redis": "^4.7.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.8",
