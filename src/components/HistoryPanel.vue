@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { formatDuration, formatTrialTimestamp } from '../utils/format.js'
 import { useMissionStore } from '../store/missionStore.js'
 
@@ -7,7 +7,7 @@ const props = defineProps({
   state: { type: Object, required: true }
 })
 
-const { exportTrialsLog, importTrialsLog } = useMissionStore()
+const { exportTrialsLog, importTrialsLog, deleteTrial, clearAllTrials } = useMissionStore()
 
 // Which trials currently show their per-waypoint breakdown. Purely local
 // display state, kept per trial id so opening one doesn't affect the rest.
@@ -66,6 +66,44 @@ async function onFileSelected(event) {
     showFeedback('error', err.message || 'Import failed.')
   }
 }
+
+// --- Delete a single trial ---
+async function onDeleteTrial(trial) {
+  const ok = window.confirm(`Delete Trial ${trial.id}? This cannot be undone.`)
+  if (!ok) return
+
+  try {
+    await deleteTrial(trial.id)
+    expanded.delete(trial.id)
+    showFeedback('ok', `Trial ${trial.id} deleted.`)
+  } catch (err) {
+    showFeedback('error', err.message || 'Failed to delete trial.')
+  }
+}
+
+// --- Delete all trials ---
+async function onClearAll() {
+  if (props.state.trials.length === 0) return
+  const ok = window.confirm(`Delete all ${props.state.trials.length} trials? This cannot be undone.`)
+  if (!ok) return
+
+  try {
+    await clearAllTrials()
+    expanded.clear()
+    showFeedback('ok', 'All trials deleted.')
+  } catch (err) {
+    showFeedback('error', err.message || 'Failed to clear trials.')
+  }
+}
+
+// --- Success vs Failed comparison ---
+const stats = computed(() => {
+  const total = props.state.trials.length
+  const success = props.state.trials.filter((t) => t.outcome === 'success').length
+  const failed = total - success
+  const successRate = total === 0 ? 0 : Math.round((success / total) * 100)
+  return { total, success, failed, successRate }
+})
 </script>
 
 <template>
@@ -73,6 +111,18 @@ async function onFileSelected(event) {
     <div class="panel-head">
       <h2 class="title">Mission History</h2>
       <div class="log-actions">
+        <button
+          type="button"
+          class="icon-btn icon-btn-danger"
+          aria-label="Delete all trials"
+          title="Delete all trials"
+          :disabled="state.trials.length === 0"
+          @click="onClearAll"
+        >
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M5 6h10M8.5 6V4.5a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1V6M6.5 6l.6 9a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
         <button type="button" class="icon-btn" aria-label="Export log" title="Export log" @click="downloadLog">
           <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path d="M10 3v9M10 12l-3.5-3.5M10 12l3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
@@ -86,6 +136,25 @@ async function onFileSelected(event) {
           </svg>
         </button>
         <input ref="fileInput" type="file" accept="application/json,.json" class="file-input" @change="onFileSelected" />
+      </div>
+    </div>
+
+    <!-- Success vs Failed comparison -->
+    <div v-if="stats.total > 0" class="stats-bar">
+      <div class="stat-item" data-outcome="success">
+        <span class="stat-value">{{ stats.success }}</span>
+        <span class="stat-label">Success</span>
+      </div>
+      <div class="stat-item" data-outcome="failed">
+        <span class="stat-value">{{ stats.failed }}</span>
+        <span class="stat-label">Failed</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">{{ stats.successRate }}%</span>
+        <span class="stat-label">Rate</span>
+      </div>
+      <div class="stat-bar-track">
+        <div class="stat-bar-fill" :style="{ width: stats.successRate + '%' }"></div>
       </div>
     </div>
 
@@ -106,6 +175,17 @@ async function onFileSelected(event) {
             <span class="trial-outcome">{{ trial.outcome === 'success' ? 'Success' : 'Failed' }}</span>
             <span class="trial-total">{{ formatDuration(trial.totalTimeMs) }}</span>
           </div>
+          <button
+            type="button"
+            class="icon-btn icon-btn-danger trial-delete"
+            :aria-label="`Delete Trial ${trial.id}`"
+            title="Delete this trial"
+            @click="onDeleteTrial(trial)"
+          >
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M5 6h10M8.5 6V4.5a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1V6M6.5 6l.6 9a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
           <button
             type="button"
             class="burger"
@@ -169,13 +249,78 @@ async function onFileSelected(event) {
   color: var(--accent-strong);
   border-color: var(--accent-dim);
 }
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .icon-btn svg {
   width: 16px;
   height: 16px;
 }
+.icon-btn-danger:hover:not(:disabled) {
+  color: var(--danger-strong);
+  border-color: var(--danger);
+}
 
 .file-input {
   display: none;
+}
+
+/* Success vs Failed comparison */
+.stats-bar {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-row);
+  flex-wrap: wrap;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 46px;
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.stat-item[data-outcome='success'] .stat-value {
+  color: var(--accent-strong);
+}
+.stat-item[data-outcome='failed'] .stat-value {
+  color: var(--danger-strong);
+}
+
+.stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.stat-bar-track {
+  flex: 1;
+  min-width: 80px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--danger);
+  overflow: hidden;
+}
+
+.stat-bar-fill {
+  height: 100%;
+  background: var(--accent-strong);
+  border-radius: 999px;
+  transition: width 0.25s ease;
 }
 
 .feedback {
@@ -218,7 +363,7 @@ async function onFileSelected(event) {
 
 .trial-head {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 10px;
 }
@@ -258,6 +403,12 @@ async function onFileSelected(event) {
   font-variant-numeric: tabular-nums;
   font-size: 14px;
   color: var(--text-primary);
+}
+
+.trial-delete {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
 }
 
 .burger {

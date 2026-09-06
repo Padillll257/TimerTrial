@@ -47,7 +47,7 @@ function isAuthorized(req) {
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key')
 
   if (req.method === 'OPTIONS') {
@@ -93,13 +93,27 @@ export default async function handler(req, res) {
       return
     }
 
+    // Overwrite the whole trials array. Used by the frontend for deleting
+    // a single trial (or a filtered subset) — it reads the current list,
+    // removes what it doesn't want, then PUTs the remainder back.
+    if (req.method === 'PUT') {
+      const trials = req.body
+      if (!Array.isArray(trials)) {
+        res.status(400).json({ error: 'Body must be an array of trials.' })
+        return
+      }
+      await client.set(TRIALS_KEY, JSON.stringify(trials))
+      res.status(200).json({ trials })
+      return
+    }
+
     if (req.method === 'DELETE') {
       await client.del(TRIALS_KEY)
       res.status(200).json({ trials: [] })
       return
     }
 
-    res.setHeader('Allow', 'GET, POST, DELETE, OPTIONS')
+    res.setHeader('Allow', 'GET, POST, PUT, DELETE, OPTIONS')
     res.status(405).json({ error: 'Method not allowed' })
   } catch (err) {
     console.error('[api/trials] storage error:', err)

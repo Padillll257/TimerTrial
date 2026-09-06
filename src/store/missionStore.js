@@ -193,14 +193,80 @@ function resetForNewTrial() {
 }
 
 // Keeps "Trial N" numbering consistent and chronological (Trial 1 = earliest
-// flight) after trials are merged in from an imported file. Newest-first
-// order is preserved for display.
+// flight) after trials are merged in from an imported file, or after one
+// is deleted. Newest-first order is preserved for display.
 function renumberTrials() {
   const chronological = [...state.trials].sort((a, b) => a.startedAt - b.startedAt)
   chronological.forEach((trial, index) => {
     trial.id = index + 1
   })
   state.trials = chronological.reverse()
+}
+
+// Deletes a single trial by id, both from local state and from the backend
+// log (via a PUT that overwrites the stored array with everything except
+// the deleted trial). Throws if the server update fails for a reason other
+// than "no backend configured", so the caller (HistoryPanel) can show an
+// accurate error instead of silently pretending it worked.
+async function deleteTrial(trialId) {
+  const remaining = state.trials.filter((t) => t.id !== trialId)
+  if (remaining.length === state.trials.length) return // nothing matched, no-op
+
+  try {
+    const res = await fetch(TRIALS_API_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(remaining.map(serializeTrial))
+    })
+
+    if (res.status === 503) {
+      // No backend configured — expected in local-only use, so proceed
+      // with the local deletion instead of treating it as a failure.
+      state.syncStatus = 'offline'
+    } else if (!res.ok) {
+      state.syncStatus = 'error'
+      throw new Error('Failed to delete trial on the server.')
+    } else {
+      state.syncStatus = 'synced'
+    }
+  } catch (err) {
+    if (err instanceof TypeError) {
+      // Network-level failure (e.g. offline) rather than a server error.
+      state.syncStatus = 'error'
+      throw new Error('Could not reach the server to delete this trial.')
+    }
+    throw err
+  }
+
+  state.trials = remaining
+  renumberTrials()
+}
+
+// Deletes every trial, locally and on the backend (via DELETE, which clears
+// the whole stored key). Same error-surfacing behavior as deleteTrial.
+async function clearAllTrials() {
+  if (state.trials.length === 0) return
+
+  try {
+    const res = await fetch(TRIALS_API_URL, { method: 'DELETE' })
+
+    if (res.status === 503) {
+      state.syncStatus = 'offline'
+    } else if (!res.ok) {
+      state.syncStatus = 'error'
+      throw new Error('Failed to clear trials on the server.')
+    } else {
+      state.syncStatus = 'synced'
+    }
+  } catch (err) {
+    if (err instanceof TypeError) {
+      state.syncStatus = 'error'
+      throw new Error('Could not reach the server to clear trials.')
+    }
+    throw err
+  }
+
+  state.trials = []
 }
 
 const LOG_FILE_VERSION = 1
@@ -280,6 +346,8 @@ export function useMissionStore() {
     resetForNewTrial,
     exportTrialsLog,
     importTrialsLog,
-    loadTrialsFromServer
+    loadTrialsFromServer,
+    deleteTrial,
+    clearAllTrials
   }
 }
